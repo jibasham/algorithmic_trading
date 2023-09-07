@@ -1,0 +1,11 @@
+[project]
+name = "algorithmic_trading"
+description = "Playing around to learn how it works"
+version = "0.1.0"
+
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "yfinance",
+    "pandas"
+]
