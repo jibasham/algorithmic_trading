@@ -11,5 +11,6 @@ dependencies = [
     "ta",
     "scikit-learn",
     "tqdm",
-    "textblob"
+    "textblob",
+    "fastparquet"
 ]
