@@ -1,5 +1,8 @@
+import json
+import os
 from datetime import datetime, timedelta
 
+import joblib
 import pandas as pd
 import requests
 import ta
@@ -72,8 +75,19 @@ def fetch_news(ticker: str, from_date: str, to_date: str) -> dict:
         "sortBy": "relevancy",
         "apiKey": NEWS_API_KEY,
     }
+    filename = f"news_{ticker}_{from_date}_{to_date}.json"
+    # if file exists, read and return
+    if os.path.exists(filename):
+        with open(filename, "r") as file:
+            print(f"News data loaded from {filename}")
+            return json.load(file)
+
     response = requests.get(NEWS_API_ENDPOINT, params=params)
     response.raise_for_status()
+    # write response to file
+    with open(filename, "w") as file:
+        json.dump(response.json(), file)
+    print(f"News data saved to {filename}")
     return response.json()
 
 
@@ -154,8 +168,8 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["High"], df["Low"], df["Close"], df["Volume"]
     )
     df["ADX"] = ta.trend.adx(df["High"], df["Low"], df["Close"])
-    df["Aroon_Up"] = ta.trend.aroon_up(df["Close"])
-    df["Aroon_Down"] = ta.trend.aroon_down(df["Close"])
+    df["Aroon_Up"] = ta.trend.aroon_up(df["High"], df["Low"])
+    df["Aroon_Down"] = ta.trend.aroon_down(df["High"], df["Low"])
     df["Stoch_Oscillator"] = ta.momentum.stoch(df["High"], df["Low"], df["Close"])
     return df
 
@@ -227,7 +241,7 @@ def optimize_model(X_train: pd.DataFrame, y_train: pd.Series) -> RandomForestCla
     """
     param_grid = {
         "n_estimators": [100, 200, 300],
-        "max_features": ["auto", "sqrt", "log2"],
+        "max_features": ["sqrt", "log2"],
         "max_depth": [10, 20, 30, None],
     }
     grid_search = GridSearchCV(
@@ -275,6 +289,42 @@ def walk_forward_validation(
         results["recall"].append(recall_score(y_test, y_pred))
 
     return results
+
+
+def save_dataframe_to_parquet(df: pd.DataFrame, filename: str):
+    """
+    Save a DataFrame to a Parquet file.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame to save.
+    filename : str
+        Filename for the Parquet file.
+
+    Returns
+    -------
+    None
+    """
+    df.to_parquet(filename)
+
+
+def save_model(model, filename: str):
+    """
+    Save a model to a file.
+
+    Parameters
+    ----------
+    model :
+        Model to save.
+    filename : str
+        Filename for the model file.
+
+    Returns
+    -------
+    None
+    """
+    joblib.dump(model, filename)
 
 
 def save_predictions_to_markdown(predictions: dict, filename: str):
@@ -337,6 +387,7 @@ def main():
     print("Preparing data for walk-forward validation...")
     # Prepare data for walk-forward validation
     df = prepare_data(processed_data)
+    save_dataframe_to_parquet(df, "prepared_data.parquet")
 
     print("Starting walk-forward validation...")
     # Walk-forward validation
@@ -352,17 +403,26 @@ def main():
     print("Making daily predictions...")
     # Predict stock movement for the next day
     predictions = {}
+    models = {}
     for ticker in tickers:
-        latest_data = (
-            processed_data[ticker].iloc[-1:].drop(columns=["Target", "Ticker"])
-        )
-        model = optimize_model(latest_data, processed_data[ticker]["Target"])
-        prediction = model.predict(latest_data)
+        # Use the last 30 days of data for the prediction
+        latest_data = processed_data[ticker].iloc[-30:]
+        X_latest = latest_data.drop(columns=["Target", "Ticker"])
+        y_latest = latest_data["Target"]
+
+        model = optimize_model(X_latest, y_latest)
+        prediction = model.predict(X_latest.tail(1))
         predictions[ticker] = prediction[0]
+        models[ticker] = model
 
     print("Saving predictions to markdown...")
     # Save predictions to markdown
     save_predictions_to_markdown(predictions, "daily_predictions.md")
+
+    print("Saving models...")
+    # Save models
+    for ticker, model in models.items():
+        save_model(model, f"model_{ticker}.joblib")
 
     print("Process completed.")
 
