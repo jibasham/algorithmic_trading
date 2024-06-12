@@ -171,6 +171,8 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["Aroon_Up"] = ta.trend.aroon_up(df["High"], df["Low"])
     df["Aroon_Down"] = ta.trend.aroon_down(df["High"], df["Low"])
     df["Stoch_Oscillator"] = ta.momentum.stoch(df["High"], df["Low"], df["Close"])
+    df["CCI"] = ta.trend.cci(df["High"], df["Low"], df["Close"])
+    df["ROC"] = ta.momentum.roc(df["Close"])
     return df
 
 
