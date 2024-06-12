@@ -113,6 +113,9 @@ def fetch_sentiment_data(tickers: list[str], from_date: str, to_date: str) -> di
     """
     Fetch and analyze sentiment data for a list of ticker symbols.
 
+    Gets sentiment day by day. May want to cut it down to week by week
+    to reduce the number of API calls.
+
     Parameters
     ----------
     tickers : list of str
@@ -127,19 +130,31 @@ def fetch_sentiment_data(tickers: list[str], from_date: str, to_date: str) -> di
     dict
         Dictionary with ticker symbols as keys and their corresponding average sentiment and individual sentiments as values.
     """
-    sentiment_data = {}
-    for ticker in tqdm(tickers, desc="Fetching sentiment data"):
-        articles = fetch_news(ticker, from_date, to_date)
-        sentiments = []
-        article_count = len(articles["articles"])
-        for article in articles["articles"]:
-            sentiment = analyze_sentiment(article["description"] or article["title"])
-            sentiments.append(sentiment)
-        sentiment_data[ticker] = {
-            "average_sentiment": sum(sentiments) / len(sentiments) if sentiments else 0,
-            "sentiments": sentiments,
-            "article_count": article_count,
-        }
+    sentiment_data = {ticker: [] for ticker in tickers}
+    current_date = datetime.strptime(from_date, "%Y-%m-%d")
+    end_date = datetime.strptime(to_date, "%Y-%m-%d")
+
+    while current_date <= end_date:
+        for ticker in tickers:
+            articles = fetch_news(
+                ticker,
+                current_date.strftime("%Y-%m-%d"),
+                current_date.strftime("%Y-%m-%d"),
+            )
+            sentiments = [
+                analyze_sentiment(article["description"] or article["title"])
+                for article in articles["articles"]
+            ]
+            average_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
+            sentiment_data[ticker].append(
+                {
+                    "date": current_date.strftime("%Y-%m-%d"),
+                    "average_sentiment": average_sentiment,
+                    "article_count": len(articles["articles"]),
+                }
+            )
+        current_date += timedelta(days=1)
+
     return sentiment_data
 
 
@@ -178,14 +193,14 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 def preprocess_data(stock_data: dict, sentiment_data: dict) -> dict:
     """
-    Preprocess and merge stock data with sentiment data.
+    Preprocess and merge stock data with daily sentiment data.
 
     Parameters
     ----------
     stock_data : dict
         Dictionary with ticker symbols as keys and their corresponding historical stock data as values.
     sentiment_data : dict
-        Dictionary with ticker symbols as keys and their corresponding sentiment data as values.
+        Dictionary with ticker symbols as keys and their corresponding daily sentiment data as values.
 
     Returns
     -------
@@ -195,8 +210,13 @@ def preprocess_data(stock_data: dict, sentiment_data: dict) -> dict:
     processed_data = {}
     for ticker in tqdm(stock_data, desc="Preprocessing data"):
         df = stock_data[ticker].copy()
-        df["Sentiment"] = sentiment_data[ticker]["average_sentiment"]
-        df["Article_Count"] = sentiment_data[ticker]["article_count"]
+        sentiment_df = pd.DataFrame(sentiment_data[ticker])
+        sentiment_df["date"] = pd.to_datetime(sentiment_df["date"])
+        df = df.merge(sentiment_df, left_index=True, right_on="date", how="left")
+        df.set_index("date", inplace=True)
+        df["Sentiment"] = df["average_sentiment"]
+        df["Article_Count"] = df["article_count"]
+        df = df.drop(columns=["average_sentiment", "article_count"])
         df = calculate_technical_indicators(df)
         processed_data[ticker] = df
     return processed_data
