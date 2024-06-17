@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import joblib
 import pandas as pd
@@ -75,19 +76,25 @@ def fetch_news(ticker: str, from_date: str, to_date: str) -> dict:
         "sortBy": "relevancy",
         "apiKey": NEWS_API_KEY,
     }
-    filename = f"news_{ticker}_{from_date}_{to_date}.json"
+    filename = Path(f".cache/news_{ticker}_{from_date}_{to_date}.json")
+
     # if file exists, read and return
-    if os.path.exists(filename):
-        with open(filename, "r") as file:
+    if filename.exists():
+        with filename.open("r") as file:
             print(f"News data loaded from {filename}")
             return json.load(file)
 
     response = requests.get(NEWS_API_ENDPOINT, params=params)
     response.raise_for_status()
+
+    # Ensure directory exists
+    filename.parent.mkdir(parents=True, exist_ok=True)
+
     # write response to file
-    with open(filename, "w") as file:
+    with filename.open("w") as file:
         json.dump(response.json(), file)
     print(f"News data saved to {filename}")
+
     return response.json()
 
 
@@ -111,10 +118,7 @@ def analyze_sentiment(article: str) -> float:
 
 def fetch_sentiment_data(tickers: list[str], from_date: str, to_date: str) -> dict:
     """
-    Fetch and analyze sentiment data for a list of ticker symbols.
-
-    Gets sentiment day by day. May want to cut it down to week by week
-    to reduce the number of API calls.
+    Fetch and analyze sentiment data for a list of ticker symbols weekly, then unpack to daily.
 
     Parameters
     ----------
@@ -128,32 +132,57 @@ def fetch_sentiment_data(tickers: list[str], from_date: str, to_date: str) -> di
     Returns
     -------
     dict
-        Dictionary with ticker symbols as keys and their corresponding average sentiment and individual sentiments as values.
+        Dictionary with ticker symbols as keys and their corresponding daily sentiment data as values.
     """
     sentiment_data = {ticker: [] for ticker in tickers}
     current_date = datetime.strptime(from_date, "%Y-%m-%d")
     end_date = datetime.strptime(to_date, "%Y-%m-%d")
 
     while current_date <= end_date:
+        week_start = current_date
+        week_end = current_date + timedelta(days=6)
+
         for ticker in tickers:
             articles = fetch_news(
-                ticker,
-                current_date.strftime("%Y-%m-%d"),
-                current_date.strftime("%Y-%m-%d"),
+                ticker, week_start.strftime("%Y-%m-%d"), week_end.strftime("%Y-%m-%d")
             )
-            sentiments = [
-                analyze_sentiment(article["description"] or article["title"])
-                for article in articles["articles"]
-            ]
-            average_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
-            sentiment_data[ticker].append(
-                {
-                    "date": current_date.strftime("%Y-%m-%d"),
-                    "average_sentiment": average_sentiment,
-                    "article_count": len(articles["articles"]),
-                }
+            daily_sentiments = {}
+
+            for article in articles["articles"]:
+                publish_date = article["publishedAt"][:10]
+                sentiment = analyze_sentiment(
+                    article["description"] or article["title"]
+                )
+
+                if publish_date not in daily_sentiments:
+                    daily_sentiments[publish_date] = []
+                daily_sentiments[publish_date].append(sentiment)
+
+            # Calculate daily average sentiments and weekly average
+            daily_avg_sentiments = {
+                date: sum(sentiments) / len(sentiments)
+                for date, sentiments in daily_sentiments.items()
+            }
+            weekly_avg_sentiment = (
+                sum(daily_avg_sentiments.values()) / len(daily_avg_sentiments)
+                if daily_avg_sentiments
+                else 0
             )
-        current_date += timedelta(days=1)
+
+            for single_date in (week_start + timedelta(n) for n in range(7)):
+                date_str = single_date.strftime("%Y-%m-%d")
+                sentiment = daily_avg_sentiments.get(date_str, weekly_avg_sentiment)
+                article_count = len(daily_sentiments.get(date_str, []))
+
+                sentiment_data[ticker].append(
+                    {
+                        "date": date_str,
+                        "average_sentiment": sentiment,
+                        "article_count": article_count,
+                    }
+                )
+
+        current_date += timedelta(days=7)
 
     return sentiment_data
 
@@ -386,7 +415,12 @@ def main():
     """
     # Define the time range
     end_date = datetime.today()
-    start_date = end_date - timedelta(days=365)  # One year of data
+    start_date = end_date - timedelta(
+        days=365
+    )  # One year of datastart_date.strftime("%Y-%m-%d")
+    sentiment_start_date = end_date - timedelta(
+        days=30
+    )  # Becuase I am using the freet tier
 
     print("Starting data acquisition...")
     # Fetch stock price data
@@ -398,7 +432,7 @@ def main():
     # Fetch sentiment data for the last 7 days
     sentiment_data = fetch_sentiment_data(
         tickers,
-        (end_date - timedelta(days=7)).strftime("%Y-%m-%d"),
+        sentiment_start_date.strftime("%Y-%m-%d"),
         end_date.strftime("%Y-%m-%d"),
     )
 
