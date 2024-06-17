@@ -25,7 +25,6 @@ NEWS_API_ENDPOINT = "https://newsapi.org/v2/everything"
 # List of ticker symbols
 tickers = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA"]
 
-
 def fetch_stock_data(tickers: list[str], start_date: str, end_date: str) -> dict:
     """
     Fetch historical stock price data for a list of ticker symbols.
@@ -239,13 +238,14 @@ def preprocess_data(stock_data: dict, sentiment_data: dict) -> dict:
     processed_data = {}
     for ticker in tqdm(stock_data, desc="Preprocessing data"):
         df = stock_data[ticker].copy()
-        sentiment_df = pd.DataFrame(sentiment_data[ticker])
-        sentiment_df["date"] = pd.to_datetime(sentiment_df["date"])
-        df = df.merge(sentiment_df, left_index=True, right_on="date", how="left")
-        df.set_index("date", inplace=True)
-        df["Sentiment"] = df["average_sentiment"]
-        df["Article_Count"] = df["article_count"]
-        df = df.drop(columns=["average_sentiment", "article_count"])
+        if sentiment_data:
+            sentiment_df = pd.DataFrame(sentiment_data[ticker])
+            sentiment_df["date"] = pd.to_datetime(sentiment_df["date"])
+            df = df.merge(sentiment_df, left_index=True, right_on="date", how="left")
+            df.set_index("date", inplace=True)
+            df["Sentiment"] = df["average_sentiment"]
+            df["Article_Count"] = df["article_count"]
+            df = df.drop(columns=["average_sentiment", "article_count"])
         df = calculate_technical_indicators(df)
         processed_data[ticker] = df
     return processed_data
@@ -415,12 +415,10 @@ def main():
     """
     # Define the time range
     end_date = datetime.today()
-    start_date = end_date - timedelta(
-        days=365
-    )  # One year of datastart_date.strftime("%Y-%m-%d")
+    start_date = end_date - timedelta(days=365)  # One year of data
     sentiment_start_date = end_date - timedelta(
         days=30
-    )  # Becuase I am using the freet tier
+    )  # Because I am using the free tier
 
     print("Starting data acquisition...")
     # Fetch stock price data
@@ -428,13 +426,20 @@ def main():
         tickers, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
     )
 
-    print("Fetching sentiment data...")
-    # Fetch sentiment data for the last 7 days
-    sentiment_data = fetch_sentiment_data(
-        tickers,
-        sentiment_start_date.strftime("%Y-%m-%d"),
-        end_date.strftime("%Y-%m-%d"),
+    use_sentiment_data = (
+        False  # Set this flag to True to enable sentiment data processing
     )
+
+    if use_sentiment_data:
+        print("Fetching sentiment data...")
+        # Fetch sentiment data for the last 30 days
+        sentiment_data = fetch_sentiment_data(
+            tickers,
+            sentiment_start_date.strftime("%Y-%m-%d"),
+            end_date.strftime("%Y-%m-%d"),
+        )
+    else:
+        sentiment_data = {}
 
     print("Preprocessing data...")
     # Preprocess and integrate data
