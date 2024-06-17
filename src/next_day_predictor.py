@@ -25,6 +25,7 @@ NEWS_API_ENDPOINT = "https://newsapi.org/v2/everything"
 # List of ticker symbols
 tickers = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA"]
 
+
 def fetch_stock_data(tickers: list[str], start_date: str, end_date: str) -> dict:
     """
     Fetch historical stock price data for a list of ticker symbols.
@@ -342,6 +343,39 @@ def walk_forward_validation(
     return results
 
 
+def optimize_xgboost_model(
+    X_train: pd.DataFrame, y_train: pd.Series
+) -> xgb.XGBClassifier:
+    """
+    Perform grid search for hyperparameter tuning of the XGBoost model.
+
+    Parameters
+    ----------
+    X_train : pd.DataFrame
+        Training feature set.
+    y_train : pd.Series
+        Training target set.
+
+    Returns
+    -------
+    xgb.XGBClassifier
+        Best estimator from grid search.
+    """
+    param_grid = {
+        "n_estimators": [100, 200, 300],
+        "learning_rate": [0.01, 0.1, 0.2],
+        "max_depth": [3, 6, 9],
+        "subsample": [0.6, 0.8, 1.0],
+        "colsample_bytree": [0.6, 0.8, 1.0],
+    }
+    xgb_model = xgb.XGBClassifier(
+        random_state=42, use_label_encoder=False, eval_metric="logloss"
+    )
+    grid_search = GridSearchCV(xgb_model, param_grid, cv=5, scoring="accuracy")
+    grid_search.fit(X_train, y_train)
+    return grid_search.best_estimator_
+
+
 def save_dataframe_to_parquet(df: pd.DataFrame, filename: str):
     """
     Save a DataFrame to a Parquet file.
@@ -415,10 +449,8 @@ def main():
     """
     # Define the time range
     end_date = datetime.today()
-    start_date = end_date - timedelta(days=365)  # One year of data
-    sentiment_start_date = end_date - timedelta(
-        days=30
-    )  # Because I am using the free tier
+    start_date = end_date - timedelta(days=20 * 365)  # 20 years of data
+    sentiment_start_date = end_date - timedelta(days=30)  # Free tier limit
 
     print("Starting data acquisition...")
     # Fetch stock price data
@@ -454,36 +486,51 @@ def main():
     # Walk-forward validation
     initial_train_size = int(0.6 * len(df))
     step_size = int(0.1 * len(df))
-    walk_forward_results = walk_forward_validation(df, initial_train_size, step_size)
+    walk_forward_results_rf = walk_forward_validation(
+        df, initial_train_size, step_size, optimize_model
+    )
+    walk_forward_results_xgb = walk_forward_validation(
+        df, initial_train_size, step_size, optimize_xgboost_model
+    )
 
-    print("Walk-forward validation results:")
-    # Display walk-forward validation results
-    for metric, values in walk_forward_results.items():
+    print("Walk-forward validation results for Random Forest:")
+    for metric, values in walk_forward_results_rf.items():
+        print(f"{metric.capitalize()}: {sum(values)/len(values):.2f}")
+
+    print("Walk-forward validation results for XGBoost:")
+    for metric, values in walk_forward_results_xgb.items():
         print(f"{metric.capitalize()}: {sum(values)/len(values):.2f}")
 
     print("Making daily predictions...")
-    # Predict stock movement for the next day
-    predictions = {}
-    models = {}
-    for ticker in tickers:
-        # Use the last 30 days of data for the prediction
-        latest_data = processed_data[ticker].iloc[-30:]
-        X_latest = latest_data.drop(columns=["Target", "Ticker"])
-        y_latest = latest_data["Target"]
+    # Predict stock movement for the next day using both models
+    predictions_rf = {}
+    predictions_xgb = {}
+    models_rf = {}
+    models_xgb = {}
 
-        model = optimize_model(X_latest, y_latest)
-        prediction = model.predict(X_latest.tail(1))
-        predictions[ticker] = prediction[0]
-        models[ticker] = model
+    latest_data = df.iloc[-30:]
+    X_latest = latest_data.drop(columns=["Target", "Ticker"])
+    y_latest = latest_data["Target"]
+
+    model_rf = optimize_model(X_latest, y_latest)
+    predictions_rf = model_rf.predict(X_latest.tail(len(tickers)))
+    models_rf = model_rf
+
+    model_xgb = optimize_xgboost_model(X_latest, y_latest)
+    predictions_xgb = model_xgb.predict(X_latest.tail(len(tickers)))
+    models_xgb = model_xgb
 
     print("Saving predictions to markdown...")
-    # Save predictions to markdown
-    save_predictions_to_markdown(predictions, "daily_predictions.md")
+    save_predictions_to_markdown(
+        dict(zip(tickers, predictions_rf)), "daily_predictions_rf.md"
+    )
+    save_predictions_to_markdown(
+        dict(zip(tickers, predictions_xgb)), "daily_predictions_xgb.md"
+    )
 
     print("Saving models...")
-    # Save models
-    for ticker, model in models.items():
-        save_model(model, f"model_{ticker}.joblib")
+    save_model(models_rf, "model_rf.joblib")
+    save_model(models_xgb, "model_xgb.joblib")
 
     print("Process completed.")
 
