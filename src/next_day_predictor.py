@@ -7,6 +7,7 @@ import joblib
 import pandas as pd
 import requests
 import ta
+import xgboost as xgb
 import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -304,7 +305,7 @@ def optimize_model(X_train: pd.DataFrame, y_train: pd.Series) -> RandomForestCla
 
 
 def walk_forward_validation(
-    data: pd.DataFrame, initial_train_size: int, step_size: int
+    data: pd.DataFrame, initial_train_size: int, step_size: int, model_function
 ) -> dict:
     """
     Perform walk-forward validation on the data.
@@ -317,6 +318,8 @@ def walk_forward_validation(
         Size of the initial training set.
     step_size : int
         Step size for walk-forward validation.
+    model_function : function
+        Function to optimize and return the model.
 
     Returns
     -------
@@ -333,7 +336,7 @@ def walk_forward_validation(
         X_train, y_train = train.drop(columns=["Target", "Ticker"]), train["Target"]
         X_test, y_test = test.drop(columns=["Target", "Ticker"]), test["Target"]
 
-        model = optimize_model(X_train, y_train)
+        model = model_function(X_train, y_train)
         y_pred = model.predict(X_test)
 
         results["accuracy"].append(accuracy_score(y_test, y_pred))
